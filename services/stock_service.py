@@ -5,6 +5,11 @@ import httpx
 import pandas as pd
 from starlette.concurrency import run_in_threadpool
 
+# 东方财富列表接口（用于获取候选代码）
+EM_LIST_URL = "https://push2.eastmoney.com/api/qt/clist/get"
+EM_LIST_FS = "m:0 t:6,m:0 t:80,m:1 t:2,m:1 t:23"  # 上A+科创, 深A+创业板
+EM_LIST_FIELDS = "f12,f14,f15,f3,f10,f8"
+
 # 东方财富单只行情接口与字段映射（参考 debug_single_stock.py）
 EM_SINGLE_URL = "https://push2.eastmoney.com/api/qt/stock/get"
 EM_SINGLE_FIELDS = "f57,f58,f43,f170,f50,f162,f167,f191,f137"
@@ -64,7 +69,9 @@ async def fetch_em_single(code: str, raw_only: bool = False) -> Dict[str, Any]:
         "invt": 2,
         "ut": "bd1d9ddb04089700cf9c27f6f7426281",
     }
-    async with httpx.AsyncClient(headers={"Accept-Encoding": "gzip"}, timeout=10) as client:
+    async with httpx.AsyncClient(
+        headers={"Accept-Encoding": "gzip"}, timeout=10
+    ) as client:
         resp = await client.get(EM_SINGLE_URL, params=params)
         resp.raise_for_status()
         j = resp.json()
@@ -100,7 +107,12 @@ async def fetch_ak_single(code: str, raw_only: bool = False) -> Dict[str, Any]:
         return {"source": "ak", "code": code, "data": row}
 
     if df.empty:
-        return {"source": "ak", "code": code, "data": {}, "message": "AkShare 无该代码数据"}
+        return {
+            "source": "ak",
+            "code": code,
+            "data": {},
+            "message": "AkShare 无该代码数据",
+        }
 
     show_cols: List[str] = [
         c
@@ -130,7 +142,9 @@ async def fetch_ak_single(code: str, raw_only: bool = False) -> Dict[str, Any]:
     return {"source": "ak", "code": code, "data": picked}
 
 
-async def get_stock_info(code: str, source: str = "em", raw_only: bool = False) -> Dict[str, Any]:
+async def get_stock_info(
+    code: str, source: str = "em", raw_only: bool = False
+) -> Dict[str, Any]:
     source = (source or "em").lower()
     if source == "ak":
         return await fetch_ak_single(code, raw_only=raw_only)
@@ -138,3 +152,187 @@ async def get_stock_info(code: str, source: str = "em", raw_only: bool = False) 
     return await fetch_em_single(code, raw_only=raw_only)
 
 
+# ========== 批量筛选（参考 getInfoModule/filtered_stock_details.py 与 em_all_stocks.py） ==========
+def _normalize_percent_like_series(series: pd.Series) -> pd.Series:
+    s = series.astype(str).str.replace("%", "", regex=False)
+    return pd.to_numeric(s, errors="coerce")
+
+
+def _em_percent_rule_series(series: pd.Series) -> pd.Series:
+    num = _normalize_percent_like_series(series)
+    return num.where(num.abs() <= 100, num / 100.0)
+
+
+def _normalize_list_display(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    if "量比" in df.columns:
+        df["量比"] = _em_percent_rule_series(df["量比"])
+    if "涨跌幅" in df.columns:
+        df["涨跌幅"] = _em_percent_rule_series(df["涨跌幅"])
+    if "换手率" in df.columns:
+        df["换手率"] = _em_percent_rule_series(df["换手率"])
+    return df
+
+
+def _filter_candidates(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    条件：量比>5%、换手率>1%、涨幅在(2%,5%)
+    注意：上述三列需已被 _normalize_list_display 归一化为数值百分比：2 表示 2%
+    """
+    if df.empty:
+        return df
+    for col in ["量比", "换手率", "涨跌幅"]:
+        if col not in df.columns:
+            return df.iloc[0:0]
+    cond = (
+        (df["量比"] > 5.0)
+        & (df["换手率"] > 1.0)
+        & (df["涨跌幅"] > 2.0)
+        & (df["涨跌幅"] < 5.0)
+    )
+    return df.loc[cond].copy()
+
+
+async def _em_list_fetch_page(
+    client: httpx.AsyncClient, pn: int, pz: int
+) -> Dict[str, Any]:
+    params = {
+        "pn": pn,
+        "pz": pz,
+        "po": 1,
+        "np": 1,
+        "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+        "fltt": 2,
+        "invt": 2,
+        "fid": "f3",
+        "fs": EM_LIST_FS,
+        "fields": EM_LIST_FIELDS,
+    }
+    r = await client.get(EM_LIST_URL, params=params, timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+
+def _em_list_payload_to_df(payload: Dict[str, Any]) -> pd.DataFrame:
+    data = (payload or {}).get("data") or {}
+    diff = data.get("diff") or []
+    rows = []
+    for item in diff:
+        row = {
+            "代码": item.get("f12"),
+            "名称": item.get("f14"),
+            "最新价": item.get("f15"),
+            "涨跌幅": item.get("f3"),
+            "量比": item.get("f10"),
+            "换手率": item.get("f8"),
+        }
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+async def _load_list_all_async(concurrency: int = 6, pz: int = 1000) -> pd.DataFrame:
+    limits = httpx.Limits(
+        max_connections=concurrency, max_keepalive_connections=concurrency
+    )
+    async with httpx.AsyncClient(
+        http2=False, limits=limits, headers={"Accept-Encoding": "gzip"}
+    ) as client:
+        first = await _em_list_fetch_page(client, pn=1, pz=pz)
+        df = _em_list_payload_to_df(first)
+        total = ((first.get("data") or {}).get("total")) or len(df)
+        pages = (total + pz - 1) // pz
+        if pages <= 1:
+            return df
+        sem = asyncio.Semaphore(concurrency)
+
+        async def task(pn: int):
+            async with sem:
+                return _em_list_payload_to_df(
+                    await _em_list_fetch_page(client, pn=pn, pz=pz)
+                )
+
+        tasks = [task(pn) for pn in range(2, pages + 1)]
+        if tasks:
+            others = await asyncio.gather(*tasks, return_exceptions=False)
+            if others:
+                df = pd.concat([df] + others, ignore_index=True)
+        return df
+
+
+async def get_filtered_codes_async(concurrency: int = 6, pz: int = 1000) -> List[str]:
+    df = await _load_list_all_async(concurrency=max(1, concurrency), pz=max(100, pz))
+    df = _normalize_list_display(df)
+    df = _filter_candidates(df)
+    if "代码" not in df.columns:
+        return []
+    codes = df["代码"].dropna().astype(str).tolist()
+    return codes
+
+
+def _compute_display_row_from_em_data(data: Dict[str, Any]) -> Dict[str, Any]:
+    # 基于 EM_MAP 取出可读键，并归一化百分比字段
+    row = {EM_MAP[k]: data.get(k) for k in EM_MAP.keys() if k in EM_MAP}
+    # 百分比字段：量比/委比/涨跌幅 统一规则：去%后，绝对值>100则/100
+    for pct_key in ("量比", "委比", "涨跌幅"):
+        val = _normalize_percent_like(row.get(pct_key))
+        if pd.notna(val) and abs(val) > 100:
+            val = val / 100.0
+        row[pct_key] = val
+    # 数值列转 float
+    for k in ("最新价", "市盈率-动态", "市净率", "主力净流入"):
+        if k in row and row[k] is not None:
+            try:
+                row[k] = float(row[k])
+            except Exception:
+                pass
+    # 仅保留核心列，贴近 filtered_stock_details.py 的展示
+    keep_keys = ["代码", "名称", "最新价", "涨跌幅", "委比", "主力净流入"]
+    return {k: row.get(k) for k in keep_keys if k in row}
+
+
+async def get_filtered_stock_rows(
+    concurrency: int = 8, limit: int = 0, pz: int = 1000
+) -> List[Dict[str, Any]]:
+    """
+    返回筛选后的股票详情列表（单股接口），字段贴近 filtered_stock_details.py 的展示：
+    代码、名称、最新价、涨跌幅、委比、主力净流入
+    """
+    codes = await get_filtered_codes_async(
+        concurrency=max(1, concurrency), pz=max(100, pz)
+    )
+    if not codes:
+        return []
+    if limit and limit > 0:
+        codes = codes[:limit]
+
+    limits = httpx.Limits(
+        max_connections=concurrency, max_keepalive_connections=concurrency
+    )
+    async with httpx.AsyncClient(
+        http2=False, limits=limits, headers={"Accept-Encoding": "gzip"}
+    ) as client:
+        sem = asyncio.Semaphore(concurrency)
+
+        async def task(code: str):
+            async with sem:
+                try:
+                    secid = code_to_secid(code)
+                    params = {
+                        "secid": secid,
+                        "fields": EM_SINGLE_FIELDS,
+                        "fltt": 2,
+                        "invt": 2,
+                        "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+                    }
+                    r = await client.get(EM_SINGLE_URL, params=params, timeout=10)
+                    r.raise_for_status()
+                    j = r.json()
+                    data = (j or {}).get("data") or {}
+                    return _compute_display_row_from_em_data(data)
+                except Exception:
+                    return {}
+
+        rows = await asyncio.gather(*(task(c) for c in codes))
+        # 过滤空行
+        return [r for r in rows if r]

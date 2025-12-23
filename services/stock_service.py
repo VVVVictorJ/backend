@@ -12,15 +12,14 @@ EM_LIST_FIELDS = "f12,f14,f15,f3,f10,f8"
 
 # 东方财富单只行情接口与字段映射（参考 debug_single_stock.py）
 EM_SINGLE_URL = "https://push2.eastmoney.com/api/qt/stock/get"
-EM_SINGLE_FIELDS = "f57,f58,f43,f170,f50,f162,f167,f191,f137"
+EM_SINGLE_FIELDS = "f57,f58,f43,f170,f50,f168,f191,f137"
 EM_MAP: Dict[str, str] = {
     "f57": "代码",
     "f58": "名称",
     "f43": "最新价",
     "f170": "涨跌幅",
     "f50": "量比",
-    "f162": "市盈率-动态",
-    "f167": "市净率",
+    "f168": "换手率",
     "f191": "委比",
     "f137": "主力净流入",
 }
@@ -335,7 +334,10 @@ async def get_filtered_codes_async(concurrency: int = 6, pz: int = 1000) -> List
 def _compute_display_row_from_em_data(data: Dict[str, Any]) -> Dict[str, Any]:
     # 基于 EM_MAP 取出可读键,并归一化百分比字段
     # row = {EM_MAP[k]: data.get(k) for k in EM_MAP.keys() if k in EM_MAP}
-    row = {k: data.get(k) for k in ["f57", "f58", "f43", "f170", "f191", "f137"]}
+    row = {
+        k: data.get(k)
+        for k in ["f57", "f58", "f43", "f170", "f50", "f168", "f191", "f137"]
+    }
     # 百分比字段：量比/委比/涨跌幅 统一规则：去%后,绝对值>100则/100
     for pct_key in ("f10", "f3"):
         # for pct_key in ("量比", "委比", "涨跌幅"):
@@ -352,7 +354,7 @@ def _compute_display_row_from_em_data(data: Dict[str, Any]) -> Dict[str, Any]:
     #             pass
     # 仅保留核心列,贴近 filtered_stock_details.py 的展示
     # keep_keys = ["代码", "名称", "最新价", "涨跌幅", "委比", "主力净流入"]
-    keep_keys = ["f57", "f58", "f43", "f170", "f191", "f137"]
+    keep_keys = ["f57", "f58", "f43", "f170", "f50", "f168", "f191", "f137"]
     return {k: row.get(k) for k in keep_keys if k in row}
 
 

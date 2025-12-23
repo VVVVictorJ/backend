@@ -26,6 +26,18 @@ EM_MAP: Dict[str, str] = {
 }
 
 
+"""
+@input:
+  - code: 股票代码
+@output:
+  - str: 股票代码
+@description: 将股票代码转换为东方财富secid
+@logic: 
+  1. 如果股票代码以6开头,则返回f"1.{code}"
+  2. 否则返回f"0.{code}"
+"""
+
+
 def code_to_secid(code: str) -> str:
     code = code.strip()
     if code.startswith("6"):
@@ -76,13 +88,13 @@ async def fetch_em_single(code: str, raw_only: bool = False) -> Dict[str, Any]:
         resp.raise_for_status()
         j = resp.json()
     data = (j or {}).get("data") or {}
-    if raw_only:
-        return {"source": "em", "code": code, "data": j}
-    return {"source": "em", "code": code, "data": _compute_em_metrics(data)}
+    # 按需求返回原始 f 字段（如 f57、f58 等）
+    # raw_only=true 时同样返回 data 段的原始结构,保持结构一致
+    return {"source": "em", "code": code, "data": data}
 
 
 def _fetch_ak_single_row_sync(code: str) -> pd.DataFrame:
-    # 延迟导入，避免在未使用 AK 时引入开销
+    # 延迟导入,避免在未使用 AK 时引入开销
     import akshare as ak  # type: ignore
 
     df = ak.stock_zh_a_spot_em()
@@ -175,6 +187,19 @@ def _normalize_list_display(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+"""
+@input:
+  - df: 股票数据DataFrame
+@output:
+  - pd.DataFrame: 股票数据DataFrame
+@description: 筛选符合量比>5%、换手率>1%、涨幅(2%,5%)条件的股票
+@logic: 
+  1. 如果df为空,则返回空DataFrame
+  2. 如果df的列中不包含"量比","换手率","涨跌幅",则返回空DataFrame
+  3. 返回符合量比>5%、换手率>1%、涨幅(2%,5%)条件的股票数据DataFrame
+"""
+
+
 def _filter_candidates(df: pd.DataFrame) -> pd.DataFrame:
     """
     条件：量比>5%、换手率>1%、涨幅在(2%,5%)
@@ -231,6 +256,23 @@ def _em_list_payload_to_df(payload: Dict[str, Any]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+"""
+@input:
+  - concurrency: 并发请求数
+  - pz: 每页条数
+@output:
+  - pd.DataFrame: 股票数据DataFrame
+@description: 获取全市场股票数据
+@logic: 
+  1. 获取第一页股票数据
+  2. 获取总页数
+  3. 如果总页数<=1,则返回第一页股票数据
+  4. 如果总页数>1,则并发请求剩余页数股票数据
+  5. 返回股票数据DataFrame
+@return:pd.DataFrame
+"""
+
+
 async def _load_list_all_async(concurrency: int = 6, pz: int = 1000) -> pd.DataFrame:
     limits = httpx.Limits(
         max_connections=concurrency, max_keepalive_connections=concurrency
@@ -244,6 +286,7 @@ async def _load_list_all_async(concurrency: int = 6, pz: int = 1000) -> pd.DataF
         pages = (total + pz - 1) // pz
         if pages <= 1:
             return df
+        # 并发请求剩余页数股票数据
         sem = asyncio.Semaphore(concurrency)
 
         async def task(pn: int):
@@ -260,6 +303,21 @@ async def _load_list_all_async(concurrency: int = 6, pz: int = 1000) -> pd.DataF
         return df
 
 
+"""
+@input:
+  - concurrency: 并发请求数
+  - pz: 每页条数
+@output:
+  - List[str]: 股票代码列表
+@description: 获取符合量比>5%、换手率>1%、涨幅(2%,5%)条件的股票代码
+@logic: 
+  1. 获取全市场股票数据
+  2. 归一化百分比字段
+  3. 筛选符合量比>5%、换手率>1%、涨幅(2%,5%)条件的股票
+  4. 返回股票代码列表
+"""
+
+
 async def get_filtered_codes_async(concurrency: int = 6, pz: int = 1000) -> List[str]:
     df = await _load_list_all_async(concurrency=max(1, concurrency), pz=max(100, pz))
     df = _normalize_list_display(df)
@@ -270,32 +328,55 @@ async def get_filtered_codes_async(concurrency: int = 6, pz: int = 1000) -> List
     return codes
 
 
+"""
+"""
+
+
 def _compute_display_row_from_em_data(data: Dict[str, Any]) -> Dict[str, Any]:
-    # 基于 EM_MAP 取出可读键，并归一化百分比字段
-    row = {EM_MAP[k]: data.get(k) for k in EM_MAP.keys() if k in EM_MAP}
-    # 百分比字段：量比/委比/涨跌幅 统一规则：去%后，绝对值>100则/100
-    for pct_key in ("量比", "委比", "涨跌幅"):
+    # 基于 EM_MAP 取出可读键,并归一化百分比字段
+    # row = {EM_MAP[k]: data.get(k) for k in EM_MAP.keys() if k in EM_MAP}
+    row = {k: data.get(k) for k in ["f57", "f58", "f43", "f170", "f191", "f137"]}
+    # 百分比字段：量比/委比/涨跌幅 统一规则：去%后,绝对值>100则/100
+    for pct_key in ("f10", "f3"):
+        # for pct_key in ("量比", "委比", "涨跌幅"):
         val = _normalize_percent_like(row.get(pct_key))
         if pd.notna(val) and abs(val) > 100:
             val = val / 100.0
         row[pct_key] = val
-    # 数值列转 float
-    for k in ("最新价", "市盈率-动态", "市净率", "主力净流入"):
-        if k in row and row[k] is not None:
-            try:
-                row[k] = float(row[k])
-            except Exception:
-                pass
-    # 仅保留核心列，贴近 filtered_stock_details.py 的展示
-    keep_keys = ["代码", "名称", "最新价", "涨跌幅", "委比", "主力净流入"]
+    # # 数值列转 float
+    # for k in ("最新价", "市盈率-动态", "市净率", "主力净流入"):
+    #     if k in row and row[k] is not None:
+    #         try:
+    #             row[k] = float(row[k])
+    #         except Exception:
+    #             pass
+    # 仅保留核心列,贴近 filtered_stock_details.py 的展示
+    # keep_keys = ["代码", "名称", "最新价", "涨跌幅", "委比", "主力净流入"]
+    keep_keys = ["f57", "f58", "f43", "f170", "f191", "f137"]
     return {k: row.get(k) for k in keep_keys if k in row}
+
+
+"""
+@input:
+  - concurrency: 并发请求数
+  - limit: 最多返回前N条,0表示全部
+  - pz: 每页条数
+@output:
+  - List[Dict[str, Any]]: 股票详情列表
+@description: 筛选符合量比>5%、换手率>1%、涨幅(2%,5%)条件的股票
+@logic: 
+  1. 获取符合量比>5%、换手率>1%、涨幅(2%,5%)条件的股票代码
+  2. 并发请求单只接口,返回股票详情
+  3. 返回股票详情列表
+@return:List[Dict[str, Any]]
+"""
 
 
 async def get_filtered_stock_rows(
     concurrency: int = 8, limit: int = 0, pz: int = 1000
 ) -> List[Dict[str, Any]]:
     """
-    返回筛选后的股票详情列表（单股接口），字段贴近 filtered_stock_details.py 的展示：
+    返回筛选后的股票详情列表（单股接口）,字段贴近 filtered_stock_details.py 的展示：
     代码、名称、最新价、涨跌幅、委比、主力净流入
     """
     codes = await get_filtered_codes_async(
@@ -329,6 +410,7 @@ async def get_filtered_stock_rows(
                     r.raise_for_status()
                     j = r.json()
                     data = (j or {}).get("data") or {}
+                    # return data
                     return _compute_display_row_from_em_data(data)
                 except Exception:
                     return {}

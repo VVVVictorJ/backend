@@ -14,18 +14,20 @@ async def api_get_stock(
 ) -> JSONResponse:
     """
     查询单只股票信息。
-    - EM：返回映射后的可读字段，并附带量比/委比的百分比字段
+    - EM：返回原始字段（f57、f58、f43、f170、f50、f162、f167、f191、f137 等）
     - AK：返回挑选后的常用列
     """
     data = await get_stock_info(code=code, source=source, raw_only=raw_only)
     return JSONResponse(content=data)
 
 
-@router.get("/stocks/filtered")
+@router.get("/stock/filtered")
 async def api_get_filtered_stocks(
     concurrency: int = Query(8, ge=1, le=64, description="并发请求数（1-64）"),
     limit: int = Query(0, ge=0, description="最多返回前N条，0表示全部"),
-    pz: int = Query(1000, ge=100, le=5000, description="每页条数（拉取全市场列表时使用）"),
+    pz: int = Query(
+        1000, ge=100, le=5000, description="每页条数（拉取全市场列表时使用）"
+    ),
 ) -> JSONResponse:
     """
     获取“已过滤”的股票详情列表（单股接口），规则与 filtered_stock_details.py 对齐：
@@ -35,4 +37,3 @@ async def api_get_filtered_stocks(
     """
     rows = await get_filtered_stock_rows(concurrency=concurrency, limit=limit, pz=pz)
     return JSONResponse(content={"count": len(rows), "items": rows})
-

@@ -56,8 +56,14 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SERVER_SSH_PORT }}
           script: |
-            set -e
+            set -euxo pipefail
+            if [ ! -d "${{ secrets.DEPLOY_PATH }}" ]; then
+              mkdir -p "${{ secrets.DEPLOY_PATH }}"
+            fi
             cd "${{ secrets.DEPLOY_PATH }}"
+            if [ ! -f ".env" ]; then
+              printf 'ALLOWED_ORIGINS=\n# 在此追加后端需要的其他环境变量，如：\n# SOME_API_KEY=\n' > .env
+            fi
             docker compose pull backend
             docker compose up -d backend
             docker image prune -f

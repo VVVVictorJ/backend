@@ -14,9 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy project files first to leverage Docker layer cache
-COPY pyproject.toml /app/pyproject.toml
-COPY backend /app
+# Copy project files
+COPY . /app
 
 # Install Python deps (from pyproject declared deps)
 RUN pip install --upgrade pip && \

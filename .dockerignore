@@ -1,0 +1,17 @@
+.git
+.github
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
+*.pyc
+*.pyo
+*.pyd
+*.log
+dist/
+build/
+uv.lock
+README.md
+fastapi.egg-info/
+
+

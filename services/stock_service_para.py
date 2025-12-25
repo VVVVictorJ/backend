@@ -32,12 +32,15 @@ def _em_percent_rule_series(series: pd.Series) -> pd.Series:
 def _normalize_list_display(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
-    if "量比" in df.columns:
-        df["量比"] = _em_percent_rule_series(df["量比"])
-    if "涨跌幅" in df.columns:
-        df["涨跌幅"] = _em_percent_rule_series(df["涨跌幅"])
-    if "换手率" in df.columns:
-        df["换手率"] = _em_percent_rule_series(df["换手率"])
+    # 量比
+    if "f10" in df.columns:
+        df["f10"] = _em_percent_rule_series(df["f10"])
+    # 涨跌幅
+    if "f3" in df.columns:
+        df["f3"] = _em_percent_rule_series(df["f3"])
+    # 换手率
+    if "f8" in df.columns:
+        df["f8"] = _em_percent_rule_series(df["f8"])
     return df
 
 
@@ -68,12 +71,12 @@ def _em_list_payload_to_df(payload: Dict[str, Any]) -> pd.DataFrame:
     for item in diff:
         rows.append(
             {
-                "代码": item.get("f12"),
-                "名称": item.get("f14"),
-                "最新价": item.get("f15"),
-                "涨跌幅": item.get("f3"),
-                "量比": item.get("f10"),
-                "换手率": item.get("f8"),
+                "f12": item.get("f12"),  # 代码
+                "f14": item.get("f14"),  # 名称
+                "f15": item.get("f15"),  # 最新价
+                "f3": item.get("f3"),  # 涨跌幅
+                "f10": item.get("f10"),  # 量比
+                "f8": item.get("f8"),  # 换手率
             }
         )
     return pd.DataFrame(rows)
@@ -163,19 +166,22 @@ async def get_filtered_stock_rows_by_params(
     df = _normalize_list_display(df)
     if df.empty:
         return []
-    for need in ("代码", "涨跌幅", "量比", "换手率"):
+    # 过滤出需要的列
+    for need in ("f12", "f3", "f10", "f8"):
         if need not in df.columns:
             return []
+    # 过滤出符合条件的行
     cond = (
-        (df["涨跌幅"] > float(pct_min))
-        & (df["涨跌幅"] < float(pct_max))
-        & (df["量比"] > float(lb_min))
-        & (df["换手率"] > float(hs_min))
+        (df["f3"] > float(pct_min))
+        & (df["f3"] < float(pct_max))
+        & (df["f10"] > float(lb_min))
+        & (df["f8"] > float(hs_min))
     )
     df = df.loc[cond]
-    if df.empty or "代码" not in df.columns:
+    # 提取代码列
+    if df.empty or "f12" not in df.columns:
         return []
-    codes = df["代码"].dropna().astype(str).tolist()
+    codes = df["f12"].dropna().astype(str).tolist()
     if limit and limit > 0:
         codes = codes[:limit]
     if not codes:

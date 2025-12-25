@@ -201,8 +201,8 @@ def _normalize_list_display(df: pd.DataFrame) -> pd.DataFrame:
 
 def _filter_candidates(df: pd.DataFrame) -> pd.DataFrame:
     """
-    条件：量比>5%、换手率>1%、涨幅在(2%,5%)
-    注意：上述三列需已被 _normalize_list_display 归一化为数值百分比：2 表示 2%
+    条件:量比>5%、换手率>1%、涨幅在(2%,5%)
+    注意:上述三列需已被 _normalize_list_display 归一化为数值百分比:2 表示 2%
     """
     if df.empty:
         return df
@@ -338,7 +338,7 @@ def _compute_display_row_from_em_data(data: Dict[str, Any]) -> Dict[str, Any]:
         k: data.get(k)
         for k in ["f57", "f58", "f43", "f170", "f50", "f168", "f191", "f137"]
     }
-    # 百分比字段：量比/委比/涨跌幅 统一规则：去%后,绝对值>100则/100
+    # 百分比字段:量比/委比/涨跌幅 统一规则:去%后,绝对值>100则/100
     for pct_key in ("f10", "f3"):
         # for pct_key in ("量比", "委比", "涨跌幅"):
         val = _normalize_percent_like(row.get(pct_key))
@@ -378,7 +378,7 @@ async def get_filtered_stock_rows(
     concurrency: int = 8, limit: int = 0, pz: int = 1000
 ) -> List[Dict[str, Any]]:
     """
-    返回筛选后的股票详情列表（单股接口）,字段贴近 filtered_stock_details.py 的展示：
+    返回筛选后的股票详情列表（单股接口）,字段贴近 filtered_stock_details.py 的展示:
     代码、名称、最新价、涨跌幅、委比、主力净流入
     """
     codes = await get_filtered_codes_async(

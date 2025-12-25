@@ -6,12 +6,12 @@ from typing import Any, Dict, List
 import httpx
 import pandas as pd
 
-# 东方财富列表接口（与 getInfoModule/em_all_stocks.py 一致）
+# 东方财富列表接口(与 getInfoModule/em_all_stocks.py 一致)
 EM_LIST_URL = "https://push2.eastmoney.com/api/qt/clist/get"
 EM_LIST_FS = "m:0 t:6,m:0 t:80,m:1 t:2,m:1 t:23"  # 上A+科创, 深A+创业板
 EM_LIST_FIELDS = "f12,f14,f15,f3,f10,f8"  # 代码/名称/最新价/涨跌幅/量比/换手率
 
-# 单股接口（与现有 services 保持一致：返回 f 字段）
+# 单股接口(与现有 services 保持一致：返回 f 字段)
 EM_SINGLE_URL = "https://push2.eastmoney.com/api/qt/stock/get"
 EM_SINGLE_FIELDS = "f57,f58,f43,f170,f50,f168,f191,f137"  # 代码/名称/最新价/涨跌幅/量比/换手率/委比/主力净流入
 
@@ -23,7 +23,7 @@ def _normalize_percent_like_series(series: pd.Series) -> pd.Series:
 
 def _em_percent_rule_series(series: pd.Series) -> pd.Series:
     """
-    归一化百分比：去%后转数字；若绝对值>100则/100（例如 -624 => -6.24）
+    归一化百分比:去%后转数字；若绝对值>100则/100(例如 -624 => -6.24)
     """
     num = _normalize_percent_like_series(series)
     return num.where(num.abs() <= 100, num / 100.0)
@@ -136,7 +136,7 @@ def _normalize_percent_like_scalar(value: Any) -> float:
 
 
 def _build_row_from_single_em(data: Dict[str, Any]) -> Dict[str, Any]:
-    # 返回精简原始 f 字段（与现有接口保持一致）
+    # 返回精简原始 f 字段(与现有接口保持一致)
     keep_keys = ["f57", "f58", "f43", "f170", "f50", "f168", "f191", "f137"]
     row = {k: data.get(k) for k in keep_keys}
     return row
